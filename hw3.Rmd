@@ -1,0 +1,75 @@
+---
+output: html_document
+---
+Homework 3 - Team 10 JumpingJukes
+========================================================
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+# Check for libraries and install #
+listOfPackages <- c("dplyr", "ggplot2", "rgdal", "rgeos", "e1071", "sp", "raster", "maptools", "plyr", "nnet", "magrittr", 
+        "lubridate", "stringr", "data.table", "png", "ggmap")
+NewPackages <- listOfPackages[!(listOfPackages %in% installed.packages()[,"Package"])]
+if(length(NewPackages)>0) {install.packages(NewPackages,repos="http://cran.rstudio.com/")}
+```
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+source("cleanData.R")
+source("Reuben_Q2.R")
+source("visualization.R")
+```
+
+**Task 1 - Geocoding**
+
+We geocode our data in the `cleanData.R` script.  We first read in the `nyc` data with `fread()` and use `load()` to read in the `pluto` and `intersection` data which we are using to geocode the addresses in the `nyc_311` data.  We next remove variables from the `nyc` data that are not of interest to our analysis.  We drop the columns for `Unique.Key`, `Resolution.Description` and all variables between `Park.Facility.Name` and `Ferry.Terminal.Name`, using the `select()` function from `dplyr`.  We clean the zip code data by using the `mutate()` function to convert all zip codes to integers and then to replace any zip codes that were less than 10000 with `NA` as these values were likely entered incorrectly.  
+
+We next create a subset of the `nyc` data frame called `addr` which contains all of the `nyc` data that have an `Incident.Address` variable.  We use `select()` to grab the variables `Created.Date`, `Complaint.Type`, `Incident.Zip`, any variables that contain `"Intersection"`, `Address.Type`, and `Borough`. We then use `filter()` to remove any rows that do not have an entry for `Borough` (that is actually one of the 5 NYC boroughs), as we cannot geocode a point for our part 2 analysis if we don't know which borough it belongs to.  Finally, we use `mutate()` and subsetting to change the borough names from their full names to the abbreviation for each borough.  We also use `rename()` function to rename the variables to shorter names.
+
+Another subset of the nyc data called `inter` is created next; this data is all nyc data that have an intersection as the location where the incident occured. We again use `select()` to select the following variables: `Created.Date`, `Complaint.Type`, `Incident.Zip`, any variable containting `"Intersection"`, `Address.Type` and `Borough`. We then use `filter()` to remove any rows that do not have an entry for `Borough` (that is actually one of the 5 NYC boroughs), as we cannot geocode a point for our part 2 analysis if we don't know which borough it belongs to.  Finally, we use `mutate()` and subsetting to change the borough names from their full names to the abbreviation for each borough.  We also use `rename()` function to rename the variables to shorter names.
+
+We next use `sapply()` and `str_replace()` to change `"AVENUE"` to `"AVE"`, `"STREET"` to `"ST"`, `"COURT"` to `"CT"`, `"BOULEVARD"` to `"BVD"`, `"LANE"` to `"LN"` and `"DRIVE"` to `"DR"`, as this is the format of the intersection data that we geocode against.  
+
+Finally, we use `inner_join()` to merge the `pluto` data and `addr` and the `intersection` data with `inter`.  We use `duplicate()` to remove repeated addresses and intersections so that we only have unique locations.  We combine the two dataframes `latLongs` (from the `addr` and `pluto` inner join) and `intersections` (from the `intersection` data and the `inter` inner join) into a final data frame called `nyBoroughs`, after we again `select()` the five variables that we use for our modeling and visualization, `Created.Date`, `Complaint.Type`, `Borough`, `longitude` and `latitude`.  We plot the boroughs and save the data frame as `nyBoroughs.Rdata`. 
+
+We are able to geocode about 1 million data points.  Several of these are probably duplicates and we know that at least some of the points are misclasiffied into the wrong borough, but this was the result of several passes at geocoding and seemed like enough quality data points to begin modeling the boroughs.
+
+
+**Task 2 - Recreating NYC's Boroughs**
+
+Our overall approach for creating the borough outlines was to use convex hulls to create a mask of NYC and then to use SVM to predict the boundaries of each borough.  Since SVM is a somewhat slow algorithm to run, we randomly sampled 10,000 points from each borough to include in our classification.  Since interior points do not add to the accuracy of the model, we did not include all of the points that we were able to geocode in the SVM calculation.  We next performed some formatting to our data, like renaming columns and only selecting columns of interest (i.e the latitude, longitude and borough).  We used a function called covering() (with code from http://stackoverflow.com/questions/30585924/spatial-data-in-r-plot-decision-regions-of-multi-class-svm) to create a mask that only covered NYC. This way, we would not have points in our predict raster that were outside the scope of area that we wanted to make predictions about (i.e. outside any NYC borough).  We ran the SVM model, then used the mask created by covering() to predict the borough boundaries.  Finally, we converted the raster data from the predict() function to spatial polygons and used the write_geojson() function to output our data to a .json file.  This method gave our team the best results.  We use the pluto data to create the mask, as this selects the most accurate outline of NYC to use as our grid for prediction.
+
+Some other methods that we considered were using a multinomial regression, like the example in class, but we ran into issues with this since we needed to add a 6th category to our data, that is borough = NA, so that the regression did not predict that areas outside the initial points of our data were in a borough.  SVM also worked much better than the multinomial regression, so we selected SVM in tandem with a convex hulls mask to best model the borough boundaries.  
+
+There is still much room for improvement in our method.  To get better prediction results, we need to select the majority of our points from the borders of the boundaries.  Instead of randomly sampling points from each borough, we should use a method to select mostly boundary points, with only a few interior points for each borough.  The boundary points are the main points that determine the model, not the interior points.  We also could utilize more selective geocoding to get better and fewer matches in our data and the pluto reference data so that the quality of points we were predicting with was better.
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+# Plot geocoded ponts on top of predicted polygons #
+plot(lat ~ long, grid, col=pred, pch=20, asp =1)
+points(nyBoroughs$longitude, nyBoroughs$latitude, pch=16, 
+       cex = 0.01, col = adjustcolor("yellow", 0.01))
+legend("topleft", c("Brooklyn", "Bronx", "Manhattan", "Queens", "Staten Island"), 
+       col=c("black", "red", "green", "blue", "cyan"),
+       pch = 15)
+```
+
+
+**Task 3 - Visualization**
+
+Since our data is spatio temporal, it includes the latitudes and longitudes as well as the created date for each complaint record. We would like to visualize the spatial distributions of complaint records and see if they vary from Sunday to Saturday. We chose this specific aspect of the data to visualize because it might help those relevant institutes allocate resources more effectively.
+
+We refer to the article **ggmap: Spatial Visualization with ggplot2** wrote by David Kahle and Hadley Wickham https://journal.r-project.org/archive/2013-1/kahle-wickham.pdf. In this article, they use the example crimes in Houston, in which the data are similar to what we have for New York City. So we decide to implement the approach introduced in this article.
+
+Here are the steps implemented to approach this goal.
+
+1. Use the `mdy_hms` in package `lubridate` to change the format of `Created.Date` and use `wday` to add a new column `wday` to represent the day of the week.
+
+2. Use `get_map` to get a ggmap object of New York City and plot the base layer using `ggmap`.
+
+3. Create seven heat maps using `ggplot2` for each day of the week with the data we cleaned and aggregated. Then we can take a look at where the complaints took place and their frequency. We use `facet_wrap(~ wday)` to draw faceted plots.
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+heatMap
+```
+
+From the facetd heatmap above, we can see that in fact most complaints happened on Sunday. The frequency of complaint in south of Manhattan is higher on weekends, compared with weekdays. In terms of spatial distribution, most complaints happened in Brooklyn and the central area of New York City.
